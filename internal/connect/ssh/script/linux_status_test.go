@@ -212,6 +212,77 @@ pid_dspace=""
 	}
 }
 
+func TestTCPTaskCountsFilesIndividuallyWhenIPv6FilesMissing(t *testing.T) {
+	dir := t.TempDir()
+	printfProcNetFile(t, filepath.Join(dir, "tcp"), 2)
+	printfProcNetFile(t, filepath.Join(dir, "udp"), 1)
+	// tcp6/udp6 deliberately absent, as on hosts without an IPv6 stack.
+
+	out := filepath.Join(t.TempDir(), "tcpudp")
+	runTCPTask(t, t.TempDir(), out,
+		"PROC_NET_TCP_FILES="+filepath.Join(dir, "tcp")+" "+filepath.Join(dir, "tcp6"),
+		"PROC_NET_UDP_FILES="+filepath.Join(dir, "udp")+" "+filepath.Join(dir, "udp6"))
+
+	assertTCPOutput(t, out, "tcp_total=2\nudp_total=1\n")
+}
+
+func TestTCPTaskWritesZeroWhenAllProcNetFilesMissing(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(t.TempDir(), "tcpudp")
+	runTCPTask(t, t.TempDir(), out,
+		"PROC_NET_TCP_FILES="+filepath.Join(dir, "tcp")+" "+filepath.Join(dir, "tcp6"),
+		"PROC_NET_UDP_FILES="+filepath.Join(dir, "udp")+" "+filepath.Join(dir, "udp6"))
+
+	assertTCPOutput(t, out, "tcp_total=0\nudp_total=0\n")
+}
+
+func TestTCPTaskFallsBackToZeroWhenAwkFails(t *testing.T) {
+	binDir := t.TempDir()
+	writeTestCommand(t, binDir, "awk", "exit 9")
+	dir := t.TempDir()
+	printfProcNetFile(t, filepath.Join(dir, "tcp"), 2)
+	printfProcNetFile(t, filepath.Join(dir, "udp"), 1)
+
+	out := filepath.Join(t.TempDir(), "tcpudp")
+	runTCPTask(t, binDir, out,
+		"PROC_NET_TCP_FILES="+filepath.Join(dir, "tcp"),
+		"PROC_NET_UDP_FILES="+filepath.Join(dir, "udp"))
+
+	assertTCPOutput(t, out, "tcp_total=0\nudp_total=0\n")
+}
+
+func printfProcNetFile(t *testing.T, path string, rows int) {
+	t.Helper()
+	contents := strings.Repeat("01: header-row\n", rows+1)
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runTCPTask(t *testing.T, binDir, out string, env ...string) {
+	t.Helper()
+	harness := statusScriptFunctions(t) + `
+out="$1"
+tcp_udp_task "$out"
+`
+	cmd := exec.Command("bash", "-c", harness, "linux-status-test", out)
+	cmd.Env = append(testCommandEnv(binDir), env...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tcp_udp_task failed: %v\n%s", err, output)
+	}
+}
+
+func assertTCPOutput(t *testing.T, out, want string) {
+	t.Helper()
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("tcp_udp_task output = %q, want %q", data, want)
+	}
+}
+
 func runDiskTask(t *testing.T, binDir, out string, wantError bool) {
 	t.Helper()
 	harness := statusScriptFunctions(t) + `

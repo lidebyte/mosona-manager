@@ -7,6 +7,8 @@ NET_INTERVAL="${NET_INTERVAL:-3}"
 DISK_IO_INTERVAL="${DISK_IO_INTERVAL:-1.0}"
 SECTOR_SIZE="${SECTOR_SIZE:-512}"
 DISK_SPACE_TIMEOUT="${DISK_SPACE_TIMEOUT:-10}"
+PROC_NET_TCP_FILES="${PROC_NET_TCP_FILES:-/proc/net/tcp /proc/net/tcp6}"
+PROC_NET_UDP_FILES="${PROC_NET_UDP_FILES:-/proc/net/udp /proc/net/udp6}"
 
 case "$DISK_SPACE_TIMEOUT" in
   ''|*[!0-9]*) DISK_SPACE_TIMEOUT=10 ;;
@@ -259,12 +261,23 @@ disk_io_task() {
 # TCP/UDP connections task
 tcp_udp_task() {
   local out="$1"
+  local tcp_total=0
+  local udp_total=0
+  local file count
 
-  local tcp_total
-  tcp_total=$(awk 'NR>1' /proc/net/tcp /proc/net/tcp6 2>/dev/null | wc -l)
+  for file in $PROC_NET_TCP_FILES; do
+    if [ -r "$file" ]; then
+      count=$(awk 'END { print (NR > 1) ? NR - 1 : 0 }' "$file" 2>/dev/null) || count=0
+      tcp_total=$((tcp_total + count))
+    fi
+  done
 
-  local udp_total
-  udp_total=$(awk 'NR>1' /proc/net/udp /proc/net/udp6 2>/dev/null | wc -l)
+  for file in $PROC_NET_UDP_FILES; do
+    if [ -r "$file" ]; then
+      count=$(awk 'END { print (NR > 1) ? NR - 1 : 0 }' "$file" 2>/dev/null) || count=0
+      udp_total=$((udp_total + count))
+    fi
+  done
 
   {
     printf "tcp_total=%d\n" "$tcp_total"
