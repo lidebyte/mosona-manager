@@ -3,19 +3,8 @@ package alerttasks
 import (
 	"context"
 	"fmt"
-	"log"
-	"strings"
 
-	"mosona-manager/internal/config"
-	"mosona-manager/internal/email"
-	"mosona-manager/internal/notification"
-)
-
-var (
-	sendAlertEmail    = email.Send
-	sendAlertShoutrrr = func(target, message string) error {
-		return notification.Send(context.Background(), target, message)
-	}
+	"mosona-manager/internal/servernotify"
 )
 
 type notificationDelivery struct {
@@ -24,9 +13,8 @@ type notificationDelivery struct {
 }
 
 func (a *alertInstance) notifyAll(serverId int64, item, message string) notificationDelivery {
-	var delivery notificationDelivery
 	if len(a.notifications) == 0 {
-		return delivery
+		return notificationDelivery{}
 	}
 
 	serverName, ok := (*a.serverMap)[serverId]
@@ -34,45 +22,9 @@ func (a *alertInstance) notifyAll(serverId int64, item, message string) notifica
 		serverName = fmt.Sprintf("Server %d", serverId)
 	}
 
-	uri := fmt.Sprintf("%s/%d/monitor", config.ReadDynamicConf().Domain, serverId)
-	emailContent, err := email.GetNotificationTemplate(
-		serverName,
-		item,
-		message,
-		uri,
-	)
-	if err != nil {
-		log.Println("failed to get email template:", err)
+	delivery := servernotify.Deliver(context.Background(), serverId, serverName, a.notifications, item, message)
+	return notificationDelivery{
+		attempted: delivery.Attempted,
+		delivered: delivery.Delivered,
 	}
-
-	for _, n := range a.notifications {
-		switch n.Module {
-		case "email":
-			delivery.attempted = true
-			if emailContent != "" {
-				if err := sendAlertEmail(n.Target, fmt.Sprintf("%s: %s - Alert Notification", serverName, item), emailContent); err != nil {
-					log.Println("failed to send alert email:", err)
-				} else {
-					delivery.delivered = true
-				}
-			}
-		case "shoutrrr":
-			delivery.attempted = true
-			target := n.Target
-			if strings.Contains(target, "telegram://") && !strings.Contains(target, "parsemode=") {
-				if strings.Contains(target, "?") {
-					target += "&parsemode=HTML"
-				} else {
-					target += "?parsemode=HTML"
-				}
-			}
-			if err := sendAlertShoutrrr(target, fmt.Sprintf("<b>%s – %s</b>\n%s\n\n%s", serverName, item, message, uri)); err != nil {
-				log.Println("failed to send alert shoutrrr notification:", err)
-			} else {
-				delivery.delivered = true
-			}
-		}
-	}
-
-	return delivery
 }

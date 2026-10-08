@@ -1,12 +1,14 @@
 package alerttasks
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"mosona-manager/internal/_type"
+	"mosona-manager/internal/servernotify"
 )
 
 func boolPtr(value bool) *bool {
@@ -88,9 +90,9 @@ func TestCheckStatusAlertDoesNotRepeatRecoveryWhileOnline(t *testing.T) {
 }
 
 func TestCheckStatusAlertNotifiesRecoveryAfterConfirmedOffline(t *testing.T) {
-	originalSender := sendAlertShoutrrr
-	sendAlertShoutrrr = func(string, string) error { return nil }
-	defer func() { sendAlertShoutrrr = originalSender }()
+	originalSender := servernotify.SendShoutrrr
+	servernotify.SendShoutrrr = func(context.Context, string, string) error { return nil }
+	defer func() { servernotify.SendShoutrrr = originalSender }()
 
 	now := time.Now()
 	lastNotifyAt := now.Add(-time.Minute)
@@ -115,9 +117,9 @@ func TestCheckStatusAlertNotifiesRecoveryAfterConfirmedOffline(t *testing.T) {
 }
 
 func TestCheckStatusAlertFailedDeliveryKeepsPendingTransition(t *testing.T) {
-	originalSender := sendAlertShoutrrr
-	sendAlertShoutrrr = func(string, string) error { return errors.New("send failed") }
-	defer func() { sendAlertShoutrrr = originalSender }()
+	originalSender := servernotify.SendShoutrrr
+	servernotify.SendShoutrrr = func(context.Context, string, string) error { return errors.New("send failed") }
+	defer func() { servernotify.SendShoutrrr = originalSender }()
 
 	now := time.Now()
 	lastNotifyAt := now.Add(-time.Minute)
@@ -165,13 +167,13 @@ func TestCheckStatusAlertTracksStateWithoutNotificationChannels(t *testing.T) {
 }
 
 func TestCheckStatusAlertUsesConfiguredOfflineWindowInMessage(t *testing.T) {
-	originalSender := sendAlertShoutrrr
+	originalSender := servernotify.SendShoutrrr
 	var sentMessage string
-	sendAlertShoutrrr = func(_ string, message string) error {
+	servernotify.SendShoutrrr = func(_ context.Context, _ string, message string) error {
 		sentMessage = message
 		return nil
 	}
-	defer func() { sendAlertShoutrrr = originalSender }()
+	defer func() { servernotify.SendShoutrrr = originalSender }()
 
 	serverMap := map[int64]string{1: "test-server"}
 	alert := &alertInstance{
@@ -190,9 +192,9 @@ func TestCheckStatusAlertUsesConfiguredOfflineWindowInMessage(t *testing.T) {
 }
 
 func TestCheckMetricAlertFailedDeliveryKeepsPendingAlert(t *testing.T) {
-	originalSender := sendAlertShoutrrr
-	sendAlertShoutrrr = func(string, string) error { return errors.New("send failed") }
-	defer func() { sendAlertShoutrrr = originalSender }()
+	originalSender := servernotify.SendShoutrrr
+	servernotify.SendShoutrrr = func(context.Context, string, string) error { return errors.New("send failed") }
+	defer func() { servernotify.SendShoutrrr = originalSender }()
 
 	now := time.Now()
 	lastNotifyAt := now.Add(-time.Minute)
@@ -220,9 +222,9 @@ func TestCheckMetricAlertFailedDeliveryKeepsPendingAlert(t *testing.T) {
 }
 
 func TestCheckExpiryReminderFailedDeliveryRemainsPending(t *testing.T) {
-	originalSender := sendAlertShoutrrr
-	sendAlertShoutrrr = func(string, string) error { return errors.New("send failed") }
-	defer func() { sendAlertShoutrrr = originalSender }()
+	originalSender := servernotify.SendShoutrrr
+	servernotify.SendShoutrrr = func(context.Context, string, string) error { return errors.New("send failed") }
+	defer func() { servernotify.SendShoutrrr = originalSender }()
 
 	now := time.Now()
 	endTime := now.Add(12 * time.Hour)

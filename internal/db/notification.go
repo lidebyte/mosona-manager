@@ -6,9 +6,10 @@ import (
 	"mosona-manager/internal/notification"
 )
 
-func GetNotificationsByTeamId(teamID int64) ([]_type.TeamNotification, error) {
+func GetNotificationsByTeamId(ctx context.Context, teamID int64) ([]_type.TeamNotification, error) {
 	var notifications = make([]_type.TeamNotification, 0)
-	if err := Db.Select(
+	if err := Db.SelectContext(
+		ctx,
 		&notifications,
 		"SELECT module, target FROM teams_notifications WHERE team_id=$1",
 		teamID,

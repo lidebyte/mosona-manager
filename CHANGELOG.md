@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- SSH login alerts for SSH mode Linux servers: a new `ssh_login` alert item
+  notifies when a user logs into the server via SSH (user, source IP, and
+  geolocation included; Mosona's own monitoring connections are excluded).
+  The hub polls the server's login records over the existing monitoring
+  connection and delivers alerts through the team's notification channels.
+
 ## v0.1.16 (2026-9-4)
 
 ### Fixed

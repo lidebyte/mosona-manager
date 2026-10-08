@@ -118,7 +118,7 @@ func (a *alertInstance) setObservationForRule(
 	item string,
 ) bool {
 	a.observation = alertObservation{}
-	if item == alertItemExpiry {
+	if item == alertItemExpiry || item == db.AlertItemSSHLogin {
 		return true
 	}
 	observation, loaded := observations.get(serverID, item)

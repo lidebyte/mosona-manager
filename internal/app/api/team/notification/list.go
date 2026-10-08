@@ -11,7 +11,7 @@ import (
 func list(c *echo.Context) error {
 	tid, _ := c.Get("tid").(int64)
 
-	notifications, err := db.GetNotificationsByTeamId(tid)
+	notifications, err := db.GetNotificationsByTeamId(c.Request().Context(), tid)
 	if err != nil {
 		return utils.ErrorHandler(c, err, "Database error")
 	}

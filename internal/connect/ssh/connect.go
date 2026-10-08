@@ -73,6 +73,7 @@ func SSH(
 			}
 			switch osName {
 			case "Linux":
+				go loginMonitor(connCtx, client, serverId, teamID, user)
 				if err = information(client, func(data _type.ServerInfoType) {
 					u, _ := strconv.ParseInt(data.Uptime, 10, 64)
 					bootTime := time.Unix(time.Now().Unix()-u, 0)

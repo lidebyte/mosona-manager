@@ -119,11 +119,14 @@ func TestSetObservationForRuleRequiresLoadedDataAndClearsState(t *testing.T) {
 		t.Fatalf("CPU observation = %#v", alert.observation)
 	}
 
-	if !alert.setObservationForRule(observations, 7, alertItemExpiry) {
-		t.Fatal("expiry rule unexpectedly requires an InfluxDB observation")
-	}
-	if alert.observation != (alertObservation{}) {
-		t.Fatalf("expiry retained a previous observation: %#v", alert.observation)
+	for _, item := range []string{alertItemExpiry, db.AlertItemSSHLogin} {
+		alert.observation = alertObservation{present: true, value: 88}
+		if !alert.setObservationForRule(observations, 7, item) {
+			t.Fatalf("%s rule unexpectedly requires an InfluxDB observation", item)
+		}
+		if alert.observation != (alertObservation{}) {
+			t.Fatalf("%s retained a previous observation: %#v", item, alert.observation)
+		}
 	}
 
 	alert.observation = alertObservation{present: true, value: 77}

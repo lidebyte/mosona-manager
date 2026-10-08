@@ -32,6 +32,7 @@ func TestNormalizeAlertConfigEnforcesDeclaredBounds(t *testing.T) {
 		{name: "expiry maximum", item: "expiry_reminder", threshold: 7, forDuration: 99, wantThreshold: 7},
 		{name: "expiry below minimum", item: "expiry_reminder", threshold: 0, wantErr: ErrAlertInvalidConfig},
 		{name: "expiry above maximum", item: "expiry_reminder", threshold: 8, wantErr: ErrAlertInvalidConfig},
+		{name: "ssh login ignores threshold and duration", item: AlertItemSSHLogin, threshold: 123, forDuration: 456, wantThreshold: 0, wantForDuration: 0},
 		{name: "unknown item", item: "unknown", threshold: 1, forDuration: 1, wantErr: ErrAlertNotFound},
 	}
 
@@ -45,6 +46,23 @@ func TestNormalizeAlertConfigEnforcesDeclaredBounds(t *testing.T) {
 				t.Fatalf("normalizeAlertConfig() = (%d, %d), want (%d, %d)", threshold, forDuration, test.wantThreshold, test.wantForDuration)
 			}
 		})
+	}
+}
+
+func TestAlertItemConfigsIncludeSSHLogin(t *testing.T) {
+	configs := AlertItemConfigs()
+	var found *bool
+	for _, config := range configs {
+		if config.Item == AlertItemSSHLogin {
+			enabled := config.Threshold.Enabled || config.ForDuration.Enabled
+			found = &enabled
+		}
+	}
+	if found == nil {
+		t.Fatal("AlertItemConfigs() does not include ssh_login")
+	}
+	if *found {
+		t.Fatal("ssh_login config must disable both threshold and for_duration")
 	}
 }
 

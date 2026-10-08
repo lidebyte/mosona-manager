@@ -14,6 +14,11 @@ type alertItemRule struct {
 	notifyOnce  bool
 }
 
+// AlertItemSSHLogin is the alert item for SSH login notifications. It has no
+// metric observation: events are pushed by the SSH login monitor instead of
+// the periodic alert evaluation.
+const AlertItemSSHLogin = "ssh_login"
+
 var alertItemRules = map[string]alertItemRule{
 	"status": {
 		label:       "Status",
@@ -64,6 +69,12 @@ var alertItemRules = map[string]alertItemRule{
 		forDuration: _type.AlertFieldConfig{Enabled: false},
 		notifyOnce:  true,
 	},
+	AlertItemSSHLogin: {
+		label:       "SSH Login",
+		description: "Notify when a user logs into this server via SSH (Mosona's own monitoring connections are excluded). SSH mode servers only.",
+		threshold:   _type.AlertFieldConfig{Enabled: false},
+		forDuration: _type.AlertFieldConfig{Enabled: false},
+	},
 }
 
 var ErrAlertNotFound = errors.New("alert not found")
@@ -106,6 +117,7 @@ func AlertItemConfigs() []_type.AlertItemConfig {
 		"write_iops",
 		"bandwidth",
 		"expiry_reminder",
+		AlertItemSSHLogin,
 	}
 	configs := make([]_type.AlertItemConfig, 0, len(items))
 	for _, item := range items {
