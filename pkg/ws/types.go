@@ -13,6 +13,7 @@ import (
 var (
 	ErrClientClosed       = errors.New("websocket client is closed")
 	ErrReconnectExhausted = errors.New("websocket reconnect attempts exhausted")
+	ErrNotConnected       = errors.New("websocket client is not connected")
 )
 
 // HandshakeError preserves the HTTP response when a WebSocket upgrade fails.
@@ -50,6 +51,21 @@ func IsHandshakeStatus(err error, statusCodes ...int) bool {
 	return false
 }
 
+// IsCloseError reports whether err is a websocket close frame error carrying
+// one of the given status codes.
+func IsCloseError(err error, codes ...int) bool {
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		return false
+	}
+	for _, code := range codes {
+		if closeErr.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 type reconnectCall struct {
 	done chan struct{}
 	err  error
@@ -58,22 +74,23 @@ type reconnectCall struct {
 type dialContextFunc func(context.Context, string, http.Header, string) (*websocket.Conn, error)
 
 type Client struct {
-	conn          *websocket.Conn
-	header        http.Header
-	url           string
-	mu            sync.RWMutex
-	writeMu       sync.Mutex
-	reconnectCall *reconnectCall
-	terminalErr   error
-	maxRetries    int
-	retryInterval time.Duration
-	maxRetryDelay time.Duration
-	pongWait      time.Duration
-	onReconnect   func()
-	ctx           context.Context
-	cancel        context.CancelFunc
-	closed        bool
-	connecting    bool
-	ipPreference  string
-	dialContext   dialContextFunc
+	conn               *websocket.Conn
+	header             http.Header
+	url                string
+	mu                 sync.RWMutex
+	writeMu            sync.Mutex
+	reconnectCall      *reconnectCall
+	terminalErr        error
+	maxRetries         int
+	retryInterval      time.Duration
+	maxRetryDelay      time.Duration
+	pongWait           time.Duration
+	onReconnect        func()
+	terminalCloseCodes []int
+	ctx                context.Context
+	cancel             context.CancelFunc
+	closed             bool
+	connecting         bool
+	ipPreference       string
+	dialContext        dialContextFunc
 }

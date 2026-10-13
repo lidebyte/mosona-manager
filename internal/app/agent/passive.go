@@ -9,7 +9,9 @@ import (
 	"mosona-manager/internal/connect/callback"
 	"mosona-manager/internal/db"
 	"mosona-manager/internal/influx"
+	"mosona-manager/internal/loginnotify"
 	"mosona-manager/pkg/httporigin"
+	pbTypes "mosona-manager/pkg/types"
 	"mosona-manager/pkg/wsutil"
 	"net/http"
 	"strconv"
@@ -89,11 +91,23 @@ func passiveWS(c *echo.Context) error {
 	}
 
 	wsutil.StartPing(c.Request().Context(), ws, mainConn.WriteMutex(), "passive agent ping")
+	loginCtx, cancelLogins := context.WithCancel(c.Request().Context())
+	defer cancelLogins()
+	loginReporter := loginnotify.NewAgentReporter(loginCtx, serverId)
 
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			return nil
+		}
+
+		// Newer agents also push pbTypes.Msg frames (e.g. SSH login events)
+		// on this connection; they are distinguished from the plain
+		// agentTypes.Status frames by the msgpack "code" key.
+		var frame pbTypes.Msg
+		if err = msgpack.Unmarshal(msg, &frame); err == nil && frame.Code == pbTypes.MsgCodeSSHLogin {
+			loginReporter.SubmitMsg(frame)
+			continue
 		}
 
 		var data agentTypes.Status

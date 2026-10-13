@@ -12,10 +12,7 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 	"mosona-manager/internal/connect/ssh/script"
-	"mosona-manager/internal/db"
-	"mosona-manager/internal/influx"
-	"mosona-manager/internal/servernotify"
-	"mosona-manager/internal/utils"
+	"mosona-manager/internal/loginnotify"
 )
 
 const (
@@ -24,9 +21,8 @@ const (
 	loginProbeTimeout  = 15 * time.Second
 	// Re-request a small window on the server clock to cover records written
 	// around the previous probe; session keys discard repeated entries.
-	loginSinceOverlap            = 5 * time.Minute
-	maxLoginNotificationsPerPoll = 5
-	loginLastLines               = 50
+	loginSinceOverlap = 5 * time.Minute
+	loginLastLines    = 50
 )
 
 // loginSession is a single login entry reported by linux_logins.sh.
@@ -294,50 +290,16 @@ func loginMonitor(ctx context.Context, client *gossh.Client, serverId, teamID in
 	}
 }
 
-// notifyFreshLogins delivers login notifications for newly seen sessions,
-// gated on the server having an ssh_login alert rule configured.
+// notifyFreshLogins delivers login notifications for newly seen sessions via
+// the shared loginnotify reporter.
 func notifyFreshLogins(ctx context.Context, serverId, teamID int64, fresh []loginSession) {
-	if !queryLoginAlertOn(serverId) {
-		return
-	}
-	if len(fresh) > maxLoginNotificationsPerPoll {
-		log.Printf("server %d reported %d new SSH logins in one poll, notifying only the first %d", serverId, len(fresh), maxLoginNotificationsPerPoll)
-		fresh = fresh[:maxLoginNotificationsPerPoll]
-	}
+	events := make([]loginnotify.Event, 0, len(fresh))
 	for _, session := range fresh {
-		country := "Unknown"
-		if geo, err := getIPGeoLocation(session.ip); err == nil && geo.Country != "" {
-			country = geo.Country
-		}
-		addSecurityLog(teamID, 0, "security",
-			fmt.Sprintf("SSH login: user '%s' from %s (%s)", session.user, session.ip, country),
-			session.ip, "ssh login monitor", "medium")
-		message := fmt.Sprintf("User '%s' logged in via SSH from %s (%s)", session.user, session.ip, country)
-		delivery := notifyServerEvent(ctx, teamID, serverId, "SSH Login", message)
-		if delivery.Attempted && !delivery.Delivered {
-			log.Printf("failed to deliver SSH login notification for server %d", serverId)
-		}
+		events = append(events, loginnotify.Event{
+			User: session.user,
+			TTY:  session.tty,
+			IP:   session.ip,
+		})
 	}
-}
-
-// Wiring points kept as variables so tests can stub external dependencies.
-var (
-	getIPGeoLocation  = utils.GetIPGeoLocation
-	addSecurityLog    = influx.LogAdd
-	notifyServerEvent = servernotify.NotifyServerEvent
-	queryLoginAlertOn = sshLoginAlertEnabled
-)
-
-// sshLoginAlertEnabled reports whether the server has an ssh_login alert
-// rule configured (per-server opt-in, also via team alert fan-out).
-func sshLoginAlertEnabled(serverId int64) bool {
-	var enabled bool
-	if err := db.Db.QueryRow(
-		`SELECT EXISTS (SELECT 1 FROM server_alerts WHERE server_id = $1 AND item = $2)`,
-		serverId, db.AlertItemSSHLogin,
-	).Scan(&enabled); err != nil {
-		log.Println("failed to check ssh_login alert rule for server", serverId, ":", err)
-		return false
-	}
-	return enabled
+	loginnotify.Report(ctx, serverId, teamID, events)
 }

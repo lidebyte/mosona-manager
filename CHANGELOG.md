@@ -1,14 +1,18 @@
 # Changelog
 
-## Unreleased
+## v0.1.17 (2026-10-13)
 
 ### Added
 
-- SSH login alerts for SSH mode Linux servers: a new `ssh_login` alert item
-  notifies when a user logs into the server via SSH (user, source IP, and
-  geolocation included; Mosona's own monitoring connections are excluded).
-  The hub polls the server's login records over the existing monitoring
-  connection and delivers alerts through the team's notification channels.
+- SSH login alerts for Linux servers, via the new `ssh_login` alert item,
+  now available in every server mode.
+
+### Fixed
+
+- Count TCP/UDP connections per `/proc/net` file during SSH status
+  collection: the previous single-pass count included the IPv6 file's
+  header line, inflating both totals by one on hosts with an IPv6 stack;
+  hosts without `tcp6`/`udp6` files are now handled cleanly as well.
 
 ## v0.1.16 (2026-9-4)
 

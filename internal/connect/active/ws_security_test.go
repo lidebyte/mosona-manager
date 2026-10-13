@@ -392,6 +392,12 @@ func TestConnectShellRejectsUnprotectedOrSwappedPrivateKey(t *testing.T) {
 }
 
 func serveFakeAgentHandshake(conn *websocket.Conn, r *http.Request, identityPrivate ed25519.PrivateKey, mutate fakeAgentMutation, complete bool, agentFinished []byte) ([]byte, error) {
+	return serveFakeAgentHandshakeAfter(conn, r, identityPrivate, mutate, complete, agentFinished, nil)
+}
+
+// serveFakeAgentHandshakeAfter completes the v2 handshake and then invokes
+// after (e.g. sending a close frame) before the connection is closed.
+func serveFakeAgentHandshakeAfter(conn *websocket.Conn, r *http.Request, identityPrivate ed25519.PrivateKey, mutate fakeAgentMutation, complete bool, agentFinished []byte, after func() error) ([]byte, error) {
 	defer func() { _ = conn.Close() }()
 	_, data, err := conn.ReadMessage()
 	if err != nil {
@@ -466,6 +472,9 @@ func serveFakeAgentHandshake(conn *websocket.Conn, r *http.Request, identityPriv
 	frame, err = sc.Encrypt(agentFinished)
 	if err == nil {
 		err = conn.WriteMessage(websocket.BinaryMessage, frame)
+	}
+	if err == nil && after != nil {
+		err = after()
 	}
 	return encoded, err
 }

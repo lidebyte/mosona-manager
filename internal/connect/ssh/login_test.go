@@ -1,15 +1,9 @@
 package ssh
 
 import (
-	"context"
-	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"mosona-manager/internal/servernotify"
-	"mosona-manager/internal/utils"
 )
 
 func TestParseLoginProbe(t *testing.T) {
@@ -85,100 +79,6 @@ func TestDiffLoginSessionsFirstPollSeedsBaseline(t *testing.T) {
 	}
 	if len(snapshot) != 1 {
 		t.Fatalf("snapshot size = %d, want 1", len(snapshot))
-	}
-}
-
-type loginNotifyRecorder struct {
-	mu       sync.Mutex
-	messages []string
-	items    []string
-}
-
-func (r *loginNotifyRecorder) record(ctx context.Context, teamId, serverId int64, item, message string) servernotify.Delivery {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.messages = append(r.messages, message)
-	r.items = append(r.items, item)
-	return servernotify.Delivery{Attempted: true, Delivered: true}
-}
-
-func stubLoginDeps(t *testing.T, ruleEnabled bool, geo utils.IPGeoResponse, geoErr error) *loginNotifyRecorder {
-	t.Helper()
-
-	originalQuery := queryLoginAlertOn
-	originalGeo := getIPGeoLocation
-	originalNotify := notifyServerEvent
-	originalLog := addSecurityLog
-
-	recorder := &loginNotifyRecorder{}
-	queryLoginAlertOn = func(int64) bool { return ruleEnabled }
-	getIPGeoLocation = func(ip string) (utils.IPGeoResponse, error) { return geo, geoErr }
-	notifyServerEvent = recorder.record
-	addSecurityLog = func(int64, int64, string, string, string, string, string) {}
-
-	t.Cleanup(func() {
-		queryLoginAlertOn = originalQuery
-		getIPGeoLocation = originalGeo
-		notifyServerEvent = originalNotify
-		addSecurityLog = originalLog
-	})
-	return recorder
-}
-
-func TestNotifyFreshLoginsSkippedWhenRuleDisabled(t *testing.T) {
-	recorder := stubLoginDeps(t, false, utils.IPGeoResponse{Country: "China"}, nil)
-
-	notifyFreshLogins(context.Background(), 1, 7, []loginSession{
-		{user: "root", tty: "pts/0", ip: "203.0.113.7", date: "d1"},
-	})
-
-	if len(recorder.messages) != 0 {
-		t.Fatalf("notifications sent despite disabled rule: %v", recorder.messages)
-	}
-}
-
-func TestNotifyFreshLoginsIncludesUserIPAndCountry(t *testing.T) {
-	recorder := stubLoginDeps(t, true, utils.IPGeoResponse{Country: "China"}, nil)
-
-	notifyFreshLogins(context.Background(), 1, 7, []loginSession{
-		{user: "root", tty: "pts/0", ip: "203.0.113.7", date: "d1"},
-	})
-
-	if len(recorder.messages) != 1 {
-		t.Fatalf("messages = %v", recorder.messages)
-	}
-	want := "User 'root' logged in via SSH from 203.0.113.7 (China)"
-	if recorder.messages[0] != want {
-		t.Fatalf("message = %q, want %q", recorder.messages[0], want)
-	}
-	if recorder.items[0] != "SSH Login" {
-		t.Fatalf("item = %q", recorder.items[0])
-	}
-}
-
-func TestNotifyFreshLoginsFallsBackToUnknownCountry(t *testing.T) {
-	recorder := stubLoginDeps(t, true, utils.IPGeoResponse{}, errors.New("geo db unavailable"))
-
-	notifyFreshLogins(context.Background(), 1, 7, []loginSession{
-		{user: "root", tty: "pts/0", ip: "203.0.113.7", date: "d1"},
-	})
-
-	if len(recorder.messages) != 1 || !strings.Contains(recorder.messages[0], "(Unknown)") {
-		t.Fatalf("messages = %v, want Unknown country fallback", recorder.messages)
-	}
-}
-
-func TestNotifyFreshLoginsCapPerPoll(t *testing.T) {
-	recorder := stubLoginDeps(t, true, utils.IPGeoResponse{Country: "China"}, nil)
-
-	sessions := make([]loginSession, 0, maxLoginNotificationsPerPoll+2)
-	for i := 0; i < maxLoginNotificationsPerPoll+2; i++ {
-		sessions = append(sessions, loginSession{user: "root", tty: "pts/0", ip: "203.0.113.7", date: "d"})
-	}
-	notifyFreshLogins(context.Background(), 1, 7, sessions)
-
-	if len(recorder.messages) != maxLoginNotificationsPerPoll {
-		t.Fatalf("notified %d times, want cap %d", len(recorder.messages), maxLoginNotificationsPerPoll)
 	}
 }
 

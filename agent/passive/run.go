@@ -1,10 +1,14 @@
 package passive
 
 import (
+	"context"
+	"errors"
 	"log"
 	"math/rand/v2"
 	"mosona-manager/agent/config"
+	"mosona-manager/agent/logins"
 	"mosona-manager/agent/telemetry"
+	agentTypes "mosona-manager/agent/types"
 	pbTypes "mosona-manager/pkg/types"
 	"mosona-manager/pkg/ws"
 	"time"
@@ -60,6 +64,8 @@ func Run() {
 	}
 
 	// Monitoring loop
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	if !config.Current.NoMonitor {
 		go func() {
 			monitor := telemetry.NewMonitor()
@@ -85,6 +91,22 @@ func Run() {
 				}
 			}
 		}()
+
+		// SSH login watch: events are pushed on the same connection; while the
+		// hub is disconnected they are dropped (same semantics as the SSH-mode
+		// login monitor, which does not backfill either).
+		go func() {
+			logins.Run(ctx, func(ev agentTypes.LoginEvent) {
+				data, err := agentTypes.MarshalMsg(ev)
+				if err != nil {
+					log.Println("Failed to marshal SSH login event:", err)
+					return
+				}
+				if err = client.SendMessageIfConnected(websocket.BinaryMessage, data); err != nil && !errors.Is(err, ws.ErrNotConnected) {
+					log.Println("Failed to send SSH login event:", err)
+				}
+			})
+		}()
 	}
 
 	for {
@@ -102,7 +124,7 @@ func Run() {
 			}
 
 			switch msg.Code {
-			case "terminal":
+			case pbTypes.MsgCodeTerminal:
 				if !config.Current.NoTerminal {
 					go terminal(string(msg.Data))
 				}

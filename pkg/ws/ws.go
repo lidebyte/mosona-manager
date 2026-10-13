@@ -52,6 +52,32 @@ func (c *Client) OnReconnect(fn func()) {
 	c.onReconnect = fn
 }
 
+// SetTerminalCloseCodes makes ReadMessage return server close frames carrying
+// one of the given status codes as *websocket.CloseError instead of
+// reconnecting. Use it when the peer closes a stream permanently to signal
+// policy (e.g. an endpoint the server refuses to keep open).
+func (c *Client) SetTerminalCloseCodes(codes ...int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.terminalCloseCodes = append([]int(nil), codes...)
+}
+
+func (c *Client) isTerminalCloseError(err error) bool {
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) {
+		return false
+	}
+	c.mu.RLock()
+	codes := c.terminalCloseCodes
+	c.mu.RUnlock()
+	for _, code := range codes {
+		if closeErr.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) SetIPPreference(preference string) error {
 	if _, err := netutil.NetworkForIPPreference(preference); err != nil {
 		return err
@@ -343,6 +369,37 @@ func (c *Client) SendMessage(messageType int, data []byte) error {
 	return err
 }
 
+// SendMessageIfConnected writes only to the current connection. It never waits
+// for or starts a reconnect, and never replays data on a replacement connection.
+// The caller must keep a ReadMessage loop running to drive reconnects.
+func (c *Client) SendMessageIfConnected(messageType int, data []byte) error {
+	c.mu.RLock()
+	conn := c.conn
+	closed := c.closed
+	reconnecting := c.reconnectCall != nil
+	c.mu.RUnlock()
+	if closed {
+		return ErrClientClosed
+	}
+	if conn == nil || reconnecting {
+		return ErrNotConnected
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	c.mu.RLock()
+	current := !c.closed && c.conn == conn && c.reconnectCall == nil
+	c.mu.RUnlock()
+	if !current {
+		return ErrNotConnected
+	}
+	err := conn.WriteMessage(messageType, data)
+	if err != nil {
+		// Wake the reader so it can reconnect without blocking this sender.
+		_ = conn.Close()
+	}
+	return err
+}
+
 func (c *Client) ReadMessage() (int, []byte, error) {
 	for {
 		conn, err := c.connection()
@@ -352,6 +409,18 @@ func (c *Client) ReadMessage() (int, []byte, error) {
 		msgType, data, err := conn.ReadMessage()
 		if err == nil {
 			return msgType, data, nil
+		}
+		if c.isTerminalCloseError(err) {
+			// The server refused this stream permanently; surface the close
+			// error instead of reconnecting.
+			c.mu.Lock()
+			if c.conn == conn {
+				c.conn = nil
+				c.terminalErr = err
+			}
+			c.mu.Unlock()
+			_ = conn.Close()
+			return 0, nil, err
 		}
 		if reconnectErr := c.reconnect(conn); reconnectErr != nil {
 			return 0, nil, reconnectErr

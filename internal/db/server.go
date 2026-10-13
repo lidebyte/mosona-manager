@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"mosona-manager/internal/_type"
@@ -210,4 +211,11 @@ func IsPassiveServerMonitoringEnabled(serverID int64) (bool, error) {
 		serverID,
 	).Scan(&enabled)
 	return enabled, err
+}
+
+// GetServerTeamId returns the team that owns the server.
+func GetServerTeamId(ctx context.Context, serverID int64) (int64, error) {
+	var teamID int64
+	err := Db.QueryRowContext(ctx, "SELECT team_id FROM servers WHERE id = $1", serverID).Scan(&teamID)
+	return teamID, err
 }

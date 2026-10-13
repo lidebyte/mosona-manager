@@ -71,7 +71,7 @@ var alertItemRules = map[string]alertItemRule{
 	},
 	AlertItemSSHLogin: {
 		label:       "SSH Login",
-		description: "Notify when a user logs into this server via SSH (Mosona's own monitoring connections are excluded). SSH mode servers only.",
+		description: "Notify when a user logs into this server via SSH (Mosona's own monitoring connections are excluded). Works for SSH, active-agent, and passive-agent mode servers.",
 		threshold:   _type.AlertFieldConfig{Enabled: false},
 		forDuration: _type.AlertFieldConfig{Enabled: false},
 	},

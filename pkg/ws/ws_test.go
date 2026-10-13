@@ -313,3 +313,165 @@ func TestPongDeadlineExtendsOnPong(t *testing.T) {
 		t.Fatalf("message = %q, want alive", data)
 	}
 }
+
+func TestTerminalCloseCodeSurfacesWithoutReconnect(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "login monitoring disabled"))
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	client.SetReconnectConfig(0, 0)
+	client.SetTerminalCloseCodes(websocket.ClosePolicyViolation)
+	if err := client.Connect(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http")); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+	var dials atomic.Int32
+	client.dialContext = func(context.Context, string, http.Header, string) (*websocket.Conn, error) {
+		dials.Add(1)
+		return nil, errors.New("unexpected dial")
+	}
+
+	_, _, err := client.ReadMessage()
+	if !IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("ReadMessage() error = %v, want policy violation close", err)
+	}
+	if got := dials.Load(); got != 0 {
+		t.Fatalf("terminal close triggered %d reconnect dials, want 0", got)
+	}
+	if _, _, err := client.ReadMessage(); !IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("second ReadMessage() error = %v, want the terminal close error", err)
+	}
+}
+
+func TestCloseErrorOutsideTerminalCodesStillReconnects(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	client.SetReconnectConfig(0, 0)
+	client.SetTerminalCloseCodes(websocket.ClosePolicyViolation)
+	if err := client.Connect(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http")); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close() }()
+
+	_, _, err := client.ReadMessage()
+	if IsCloseError(err, websocket.CloseNormalClosure) {
+		t.Fatalf("ReadMessage() returned unsubscribed close code %v", err)
+	}
+	if !errors.Is(err, ErrReconnectExhausted) {
+		t.Fatalf("ReadMessage() error = %v, want existing reconnect-exhausted behavior", err)
+	}
+}
+
+func TestSendMessageIfConnectedDropsDuringReconnect(t *testing.T) {
+	frames := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			frames <- string(data)
+		}
+	}))
+	defer server.Close()
+	client := NewClient()
+	defer client.Close()
+	client.SetReconnectConfig(1, 0)
+	if err := client.Connect(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http")); err != nil {
+		t.Fatal(err)
+	}
+	originalDial := client.dialContext
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	client.dialContext = func(ctx context.Context, url string, header http.Header, pref string) (*websocket.Conn, error) {
+		close(started)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return originalDial(ctx, url, header, pref)
+	}
+	oldConn := client.conn
+	reconnected := make(chan error, 1)
+	go func() { reconnected <- client.reconnect(oldConn) }()
+	<-started
+	sent := make(chan error, 1)
+	go func() { sent <- client.SendMessageIfConnected(websocket.TextMessage, []byte("offline")) }()
+	select {
+	case err := <-sent:
+		if !errors.Is(err, ErrNotConnected) {
+			t.Fatalf("offline send = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("offline send waited for reconnect")
+	}
+	unblock()
+	if err := <-reconnected; err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SendMessageIfConnected(websocket.TextMessage, []byte("online")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-frames:
+		if frame != "online" {
+			t.Fatalf("replayed disconnected event: %q", frame)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connected event was not delivered")
+	}
+}
+
+func TestSendMessageIfConnectedDoesNotStartReconnectOnWriteFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+	client := NewClient()
+	defer client.Close()
+	if err := client.Connect(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http")); err != nil {
+		t.Fatal(err)
+	}
+	client.dialContext = func(context.Context, string, http.Header, string) (*websocket.Conn, error) {
+		t.Error("best-effort send started a reconnect")
+		return nil, errors.New("unexpected reconnect")
+	}
+	_ = client.conn.Close()
+	if err := client.SendMessageIfConnected(websocket.TextMessage, []byte("event")); err == nil {
+		t.Fatal("expected write failure")
+	}
+}

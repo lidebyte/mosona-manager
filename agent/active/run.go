@@ -32,6 +32,7 @@ func Run() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/ws/pair", middleware.WsMiddleware(handlePairWebSocket))
 	mux.HandleFunc("/api/ws/state", middleware.WsMiddleware(handleStateWebSocket))
+	mux.HandleFunc("/api/ws/login", middleware.WsMiddleware(handleLoginWebSocket))
 	if !config.Current.NoTerminal {
 		mux.HandleFunc("/api/ws/terminal", middleware.WsMiddleware(handleTerminalWebSocket))
 	}
